@@ -423,7 +423,7 @@ class WMS_API(Loggable):
 			#
 			max_pages = math.ceil(total_results / 1000)
 			for page_count in range(1, max_pages):
-				response = _get_orders(self, pgnum=page_count)
+				response = _get_orders(pgnum=page_count)
 				page_orders = response.json()["ResourceList"]
 				orders_list += page_orders
 			return orders_list
@@ -442,7 +442,7 @@ class WMS_API(Loggable):
 		body_len = len(request.request.body if request.request.body else [])
 		text_len = len(request.text)
 		approx_len = method_len + url_len + headers_len + body_len + text_len
-		self.logger.info(request.text)
+		#self.logger.info(request.text)
 		self.logger.info(f"Used approx. {str(approx_len)} bytes")
 		self.config.data["approx_bytes_used"] += approx_len
 		return approx_len
@@ -456,19 +456,6 @@ class GoogleSheets_API(Loggable):
 	def __init__(self, config: Storage):
 		self.config = config
 		creds = None
-		'''
-		if os.path.exists('./resources/token.pickle'):
-			with open('./resources/token.pickle', 'rb') as token:
-				creds = pickle.load(token)
-		if not creds or not creds.valid:
-			if creds:
-				creds.refresh(Request())
-			else:
-				flow = InstalledAppFlow.from_client_secrets_file('./resources/credentials.json', self.SCOPES)
-				creds = flow.run_local_server(port=0)
-			with open('./resources/token.pickle', 'wb') as token:
-				pickle.dump(creds, token)
-		'''
 		if os.path.exists('./resources/token.pickle'):
 			with open('./resources/token.pickle', 'rb') as token:
 				creds = pickle.load(token)
