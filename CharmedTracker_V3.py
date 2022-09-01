@@ -3,6 +3,7 @@
 from distutils import extension
 import json
 from datetime import datetime
+import pathlib
 import unittest
 import traceback
 from datetime import datetime
@@ -18,9 +19,9 @@ import pickle
 
 # Packages from PiP
 import openpyxl as pyxl
-#from googleapiclient.discovery import build
-#from google_auth_oauthlib.flow import InstalledAppFlow
-#from google.auth.transport.requests import Request
+from googleapiclient.discovery import build
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
 
 class Loggable:
 	logger = logging.getLogger()
@@ -32,21 +33,21 @@ class CharmedTracker(Loggable):
 		self.config = Storage(filepath="./resources/config.json")
 		self.orders_storage = StoredList(filepath="./resources/orders_storage.json")
 		self.scans_storage = Storage(filepath="./resources/scans_storage.json", default_value=[])
-		self.TPLC_api = TPLC_API(config=self.config)
-		#self.google_api = GoogleSheets_API(config=self.config)
+		self.wms_api = WMS_API(config=self.config)
+		self.google_api = GoogleSheets_API(config=self.config)
 
 	def main(self):
 		self.update_orders_list()
 		matches_found = self.process_scans_folder()
-		#if matches_found:
-		#	self.update_google_sheet()
+		if matches_found or True:
+			self.update_google_sheet()
 	
 	def update_orders_list(self):
 		start_date = self.config.data["last_run_date"]
 		end_date = now()
 		for customer in self.config.data["supported_customers"]:
 			customer_id = str(self.config.data["supported_customers"][customer])
-			orders_list = self.TPLC_api.get_3PLC_orders_since_date(customer_id, start_date, end_date)
+			orders_list = self.wms_api.get_3PLC_orders_since_date(customer_id, start_date, end_date)
 			if orders_list:
 				orders_count = str(len(orders_list))
 				self.logger.info(f"{orders_count} results parsed")
@@ -61,16 +62,17 @@ class CharmedTracker(Loggable):
 					self.orders_storage.add(order, index=order.close_date)
 				#
 				self.orders_storage.save()
-				self.config.data["last_run_date"] = now()
-				self.config.save()
+		self.config.data["last_run_date"] = now()
+		self.config.save()
 	
 	def process_scans_folder(self):
-		scans_folder_path = "./scans"
-		old_scans_folder_path = "./old_scans"
+		parent_dir = pathlib.Path(os.getcwd()).parent.absolute()
+		scans_dir = os.path.join(parent_dir, "scans")
+		old_scans_dir = os.path.join(parent_dir, "old_scans")
 
 		matches_found = False
-		for filename in os.listdir(scans_folder_path):
-			filepath = scans_folder_path + os.sep + filename
+		for filename in os.listdir(scans_dir):
+			filepath = scans_dir + os.sep + filename
 			self.logger.info(f"Found file: {filepath}")
 			#
 			scans_list = None
@@ -84,7 +86,7 @@ class CharmedTracker(Loggable):
 				match_count = self.match_scans(scans_list, scan_date)
 				if match_count > 0:
 					matches_found = True
-					new_filepath = old_scans_folder_path + os.sep + filename
+					new_filepath = old_scans_dir + os.sep + filename
 					os.rename(filepath, new_filepath)
 		if matches_found:	
 			self.orders_storage.save()
@@ -92,7 +94,9 @@ class CharmedTracker(Loggable):
 			return matches_found
 	
 	def update_google_sheet(self):
-		self.google_api.update(sheet_id="1Cp9xkldWyeK5fyWK0QovsH57E1vgX13YqoSN638HsGI", range="TEST!A:A", values=self.orders_storage.data)
+		sheet_id = self.config.data["google_sheet_id"]
+		sheet_range = self.config.data["google_sheet_range"]
+		self.google_api.update(sheet_id=sheet_id, range=sheet_range, values=self.orders_storage.data)
 
 	def load_csv(self, filepath: str) -> list:
 		scans_list = []
@@ -298,7 +302,8 @@ class MyJSONEncoder(json.JSONEncoder):
 			return Order(values)
 		return values
 
-class TPLC_API(Loggable):
+class WMS_API(Loggable):
+	BYTES_USED = 0
 	'''Gets orders data from 3PLC'''
 	def __init__(self, config: Storage):
 		'''
@@ -340,6 +345,7 @@ class TPLC_API(Loggable):
 		})
 
 		response = requests.request("POST", host_url, data = payload, headers = headers, timeout = 3.0)
+		self.log_data_usage(response) #TODO decorator
 		if response.status_code == 200: #HTTP 200 == OK
 			return response.json()
 		else:
@@ -354,7 +360,9 @@ class TPLC_API(Loggable):
 				"order_id": order["ReadOnly"]["OrderId"],
 				"batch_id": order["ReadOnly"].get("BatchIdentifier", {}).get("Id", None),
 				"reference_id": order["ReferenceNum"],
+				"creation_date": order["ReadOnly"]["CreationDate"],
 				"close_date": order["ReadOnly"].get("ProcessDate", None),
+				"print_date": order["ReadOnly"].get("pickTicketPrintDate", None),
 				"customer_name": order["ReadOnly"]["CustomerIdentifier"]["Name"],
 				"customer_id": order["ReadOnly"]["CustomerIdentifier"]["Id"],
 				"carrier": order["RoutingInfo"].get("Carrier", None),
@@ -391,8 +399,9 @@ class TPLC_API(Loggable):
 		rql = f"readonly.processDate=gt={start_date};readonly.processDate=lt={end_date};readonly.customeridentifier.id=={customer_id};readonly.isclosed==True"
 		max_pages = 1
 		orders_list = []
-		def _get_orders(self, pgnum):
-			host_url = f"https://secure-wms.com/orders?pgsiz=1000&pgnum={pgnum}&rql={rql}&detail=Contacts,OrderItems&itemdetail=AllocationsWithDetail"
+		def _get_orders(pgnum):
+			host_url = f"https://secure-wms.com/orders?pgsiz=1000&pgnum={pgnum}&rql={rql}&detail=Contacts"
+			#host_url = f"https://secure-wms.com/orders?pgsiz=1000&pgnum={pgnum}&rql={rql}"
 			headers = {
 				"Content-Type": "application/json; charset=utf-8",
 				"Accept": "application/json",
@@ -402,8 +411,9 @@ class TPLC_API(Loggable):
 				"Authorization": "Bearer " + self.config.data["token"]["contents"]["access_token"]
 			}
 			response = requests.request("GET", host_url, data = {}, headers = headers, timeout = 30.0)
+			self.log_data_usage(response) #TODO decorator
 			return response
-		response = _get_orders(self, pgnum=0)
+		response = _get_orders(pgnum=0)
 		if response.status_code == 200:
 			total_results = response.json()["TotalResults"]
 			self.logger.info(f"{total_results} results found for {customer_id} from {start_date} to {end_date}")
@@ -422,21 +432,31 @@ class TPLC_API(Loggable):
 			self.logger.warning(traceback.format_exc())
 			return None
 
+	def log_data_usage(self, request):
+		'''Cuz higher-ups see the API usage bill
+		Current estimate is ~2kb for a request (w/only Contacts)
+		'''
+		method_len = len(request.request.method)
+		url_len = len(request.request.url)
+		headers_len = len('\r\n'.join('{}{}'.format(key, value) for key, value in request.request.headers.items()))
+		body_len = len(request.request.body if request.request.body else [])
+		text_len = len(request.text)
+		approx_len = method_len + url_len + headers_len + body_len + text_len
+		self.logger.info(request.text)
+		self.logger.info(f"Used approx. {str(approx_len)} bytes")
+		self.config.data["approx_bytes_used"] += approx_len
+		return approx_len
+
 class GoogleSheets_API(Loggable):
 	'''
 	{'spreadsheetId': '1Cp9xkldWyeK5fyWK0QovsH57E1vgX13YqoSN638HsGI', 'updates': {'spreadsheetId': '1Cp9xkldWyeK5fyWK0QovsH57E1vgX13YqoSN638HsGI', 'updatedRange': 'MAIN!A1:L55027', 'updatedRows': 55027, 'updatedColumns': 12, 'updatedCells': 654052}}
 	'''
-	def __init__(self, config: Storage):
-		self.config = config
-		self.sheet = self.init_sheet()
-
 	SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
 
-	SAMPLE_SPREADSHEET_ID = "1Cp9xkldWyeK5fyWK0QovsH57E1vgX13YqoSN638HsGI"
-	SAMPLE_RANGE_NAME = "TEST!A:A"
-
-	def init_sheet(self):
+	def __init__(self, config: Storage):
+		self.config = config
 		creds = None
+		'''
 		if os.path.exists('./resources/token.pickle'):
 			with open('./resources/token.pickle', 'rb') as token:
 				creds = pickle.load(token)
@@ -448,15 +468,33 @@ class GoogleSheets_API(Loggable):
 				creds = flow.run_local_server(port=0)
 			with open('./resources/token.pickle', 'wb') as token:
 				pickle.dump(creds, token)
+		'''
+		if os.path.exists('./resources/token.pickle'):
+			with open('./resources/token.pickle', 'rb') as token:
+				creds = pickle.load(token)
+		if not creds or not creds.valid:
+			if creds:
+				try: #TODO rework FOC to not do this
+					creds.refresh(Request())
+				except:
+					os.remove('./resources/token.pickle')
+					flow = InstalledAppFlow.from_client_secrets_file('./resources/credentials.json', self.SCOPES)
+					creds = flow.run_local_server(port=0)
+					creds.refresh(Request())
+			else:
+				flow = InstalledAppFlow.from_client_secrets_file('./resources/credentials.json', self.SCOPES)
+				creds = flow.run_local_server(port=0)
+			with open('./resources/token.pickle', 'wb') as token:
+				pickle.dump(creds, token)
 
 		service = build('sheets', 'v4', credentials=creds)
-		return service.spreadsheets()
+		self.sheet = service.spreadsheets()
 	
 	def update(self, sheet_id: str, range: str, values):
+		self.sheet.values().clear(spreadsheetId=sheet_id, range=range).execute()
 		body = {
 			"values": self.dict_to_csv(values)
 		}
-		self.sheet.values().clear(spreadsheetId=sheet_id, range=range).execute()
 		result = self.sheet.values().append(spreadsheetId=sheet_id, range=range, valueInputOption = "RAW", body = body).execute()
 		self.logger.info(result)
 		return result
@@ -464,9 +502,8 @@ class GoogleSheets_API(Loggable):
 	def dict_to_csv(self, dict) -> list:
 		out = []
 		#
-		header_entry = dict[0]
 		header_line = []
-		for key in header_entry.keys():
+		for key in dict[0].__dict__.keys(): #keys of first element are converted to column names
 			header_line.append(key)
 		out.append(header_line)
 		#
@@ -482,7 +519,6 @@ def init_logging():
 	logger.setLevel(logging.INFO)
 	#
 	file_handler = logging.FileHandler("./resources/log.txt")
-
 	file_handler.setLevel(logging.ERROR)
 	#
 	console_handler = logging.StreamHandler()
@@ -500,3 +536,4 @@ def init_logging():
 if __name__ == "__main__":
 	init_logging()
 	ct = CharmedTracker().main()
+	
