@@ -1,12 +1,12 @@
 #CharmedTracker_V3.py
 # Default Packages
-from distutils import extension
 import json
 from datetime import datetime
 import pathlib
-import unittest
+import unittest #TODO
 import traceback
 from datetime import datetime
+from datetime import date
 from datetime import timedelta
 import json
 import requests
@@ -37,6 +37,7 @@ class CharmedTracker(Loggable):
 		self.google_api = GoogleSheets_API(config=self.config)
 
 	def main(self):
+		#TODO clean up orders older than X days
 		self.update_orders_list()
 		matches_found = self.process_scans_folder()
 		if matches_found or True:
@@ -94,9 +95,20 @@ class CharmedTracker(Loggable):
 			return matches_found
 	
 	def update_google_sheet(self):
-		sheet_id = self.config.data["google_sheet_id"]
-		sheet_range = self.config.data["google_sheet_range"]
-		self.google_api.update(sheet_id=sheet_id, range=sheet_range, values=self.orders_storage.data)
+		for customer in self.config.data["supported_customers"]:
+			spreadsheet_id = customer["google_spreadsheet_id"]
+			data_sheet_data = [order for order in self.orders_storage.data if order.customer == customer["3PLC_customer_id"]]
+			data_sheet_range = customer["google_sheet_data_range"]
+			self.google_api.update(spreadsheet_id=spreadsheet_id, range=data_sheet_range, values=data_sheet_data)
+			#
+			summary_sheet_range = customer["google_sheet_summary_range"]
+			summary_sheet_data = self.make_orders_summary(data_sheet_data)
+			self.google_api.update(spreadsheet_id=spreadsheet_id, range=summary_sheet_range, values=summary_sheet_data)
+
+	def make_orders_summary(self, orders_list):
+		start_date = self.config.data["program_start_date"]
+		end_date = today()
+		return orders_list
 
 	def load_csv(self, filepath: str) -> list:
 		scans_list = []
@@ -477,14 +489,15 @@ class GoogleSheets_API(Loggable):
 		service = build('sheets', 'v4', credentials=creds)
 		self.sheet = service.spreadsheets()
 	
-	def update(self, sheet_id: str, range: str, values):
-		self.sheet.values().clear(spreadsheetId=sheet_id, range=range).execute()
+	def update(self, spreadsheet_id: str, range: str, values):
+		self.sheet.values().clear(spreadsheetId=spreadsheet_id, range=range).execute()
 		body = {
 			"values": self.dict_to_csv(values)
 		}
-		result = self.sheet.values().append(spreadsheetId=sheet_id, range=range, valueInputOption = "RAW", body = body).execute()
+		result = self.sheet.values().append(spreadsheetId=spreadsheet_id, range=range, valueInputOption = "RAW", body = body).execute()
 		self.logger.info(result)
 		return result
+		#TODO parse results
 
 	def dict_to_csv(self, dict) -> list:
 		out = []

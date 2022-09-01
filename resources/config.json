@@ -15,10 +15,14 @@
     "tpl": "{8f403968-22c2-46f2-8942-6aaa7b846398}",
     "user_login_id": "1055",
     "last_run_date": "2022-09-01 09:12:32",
+    "program_start_date": "2022-08-01 00:00:00",
     "supported_customers": {
-        "Charmed Aroma": 1270
+        "Charmed Aroma": {
+            "3PLC_customer_id": 1270,
+            "google_spreadsheet_id": "1Cp9xkldWyeK5fyWK0QovsH57E1vgX13YqoSN638HsGI",
+            "google_sheet_data_range": "TEST!A:T",
+            "google_sheet_summary_range": "TEST3!A:T"
+        }
     },
-    "google_sheet_id": "1Cp9xkldWyeK5fyWK0QovsH57E1vgX13YqoSN638HsGI",
-    "google_sheet_range": "TEST!A:T",
     "approx_bytes_used": 30068493
 }
