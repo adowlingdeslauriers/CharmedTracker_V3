@@ -1,3 +1,10 @@
+''' TODO
+X Add header to data tab
+Change prime index from closed to created
+%shipped in 5 days (creation to scan)
+Avg. ship days
+'''
+
 #CharmedTracker_V3.py
 # Default Packages
 import json
@@ -38,10 +45,11 @@ class CharmedTracker(Loggable):
 
 	def main(self):
 		#TODO clean up orders older than X days
-		self.update_orders_list()
-		matches_found = self.process_scans_folder()
-		if matches_found or True:
-			self.update_google_sheet()
+		print(self.make_orders_summary(self.orders_storage.data))
+		#self.update_orders_list()
+		#matches_found = self.process_scans_folder()
+		#if matches_found or True:
+		#	self.update_google_sheet()
 	
 	def update_orders_list(self):
 		start_date = self.config.data["last_run_date"]
@@ -100,15 +108,30 @@ class CharmedTracker(Loggable):
 			data_sheet_data = [order for order in self.orders_storage.data if order.customer == customer["3PLC_customer_id"]]
 			data_sheet_range = customer["google_sheet_data_range"]
 			self.google_api.update(spreadsheet_id=spreadsheet_id, range=data_sheet_range, values=data_sheet_data)
-			#
-			summary_sheet_range = customer["google_sheet_summary_range"]
-			summary_sheet_data = self.make_orders_summary(data_sheet_data)
-			self.google_api.update(spreadsheet_id=spreadsheet_id, range=summary_sheet_range, values=summary_sheet_data)
+			#TODO
+			#summary_sheet_range = customer["google_sheet_summary_range"]
+			#summary_sheet_data = self.make_orders_summary(data_sheet_data)
+			#self.google_api.update(spreadsheet_id=spreadsheet_id, range=summary_sheet_range, values=summary_sheet_data)
 
 	def make_orders_summary(self, orders_list):
-		start_date = self.config.data["program_start_date"]
-		end_date = today()
-		return orders_list
+		start_date = datetime.strptime(self.config.data["program_start_date"][:10], "%Y-%m-%d")
+		end_date = datetime.strptime(today(), "%Y-%m-%d")
+		orders_by_date = {}
+		for order in orders_list:
+			date_index = start_date
+			while date_index < end_date:
+				if order.close_date[:10] == datetime.strftime(date_index, "%Y-%m-%d"):
+					if not orders_by_date.get(date_index, False):
+						orders_by_date.update({date_index: []})
+					orders_by_date[date_index].append(order)
+				date_index += timedelta(days=1)
+		'''
+		orders_by_date = {
+			"2022-09-01": [orders...],
+			"2022-09-02": [orders...]
+		}
+		'''
+		return orders_by_date
 
 	def load_csv(self, filepath: str) -> list:
 		scans_list = []
@@ -374,7 +397,7 @@ class WMS_API(Loggable):
 				"reference_id": order["ReferenceNum"],
 				"creation_date": order["ReadOnly"]["CreationDate"],
 				"close_date": order["ReadOnly"].get("ProcessDate", None),
-				"print_date": order["ReadOnly"].get("pickTicketPrintDate", None),
+				"print_date": order["ReadOnly"].get("PickTicketPrintDate", None),
 				"customer_name": order["ReadOnly"]["CustomerIdentifier"]["Name"],
 				"customer_id": order["ReadOnly"]["CustomerIdentifier"]["Id"],
 				"carrier": order["RoutingInfo"].get("Carrier", None),
@@ -413,7 +436,6 @@ class WMS_API(Loggable):
 		orders_list = []
 		def _get_orders(pgnum):
 			host_url = f"https://secure-wms.com/orders?pgsiz=1000&pgnum={pgnum}&rql={rql}&detail=Contacts"
-			#host_url = f"https://secure-wms.com/orders?pgsiz=1000&pgnum={pgnum}&rql={rql}"
 			headers = {
 				"Content-Type": "application/json; charset=utf-8",
 				"Accept": "application/json",
