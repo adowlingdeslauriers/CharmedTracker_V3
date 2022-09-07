@@ -1,17 +1,9 @@
-''' TODO
-X Add header to data tab
-X Change prime index from closed to created
-%shipped in 5 days (creation to scan)
-Avg. ship days
-'''
 #CharmedTracker_V3.py
 # Default Packages
 import json
 import pathlib
-import unittest #TODO
 import traceback
 from datetime import datetime
-from datetime import date
 from datetime import timedelta
 import json
 import requests
@@ -47,6 +39,7 @@ class CharmedTracker(Loggable):
 		matches_found = self.process_scans_folder()
 		if matches_found or True:
 			self.update_google_sheet()
+		self.logger.info("CharmedTracker exit")
 	
 	def update_orders_list(self):
 		start_date = self.config.data["last_run_date"]
@@ -104,11 +97,14 @@ class CharmedTracker(Loggable):
 			spreadsheet_id = customer["google_spreadsheet_id"]
 			data_sheet_data = [order for order in self.orders_storage.data if order.customer_id == customer["3PLC_customer_id"]]
 			data_sheet_range = customer["google_sheet_data_range"]
-			#self.google_api.update(spreadsheet_id=spreadsheet_id, range=data_sheet_range, values=self.orders_list_to_csv(data_sheet_data))
-			#
 			summary_sheet_range = customer["google_sheet_summary_range"]
 			summary_sheet_data = self.make_orders_summary(data_sheet_data)
-			self.google_api.update(spreadsheet_id=spreadsheet_id, range=summary_sheet_range, values=self.orders_summary_to_csv(summary_sheet_data))
+			result_1 = self.google_api.update(spreadsheet_id=spreadsheet_id, range=data_sheet_range, values=self.orders_list_to_csv(data_sheet_data))
+			result_2 = self.google_api.update(spreadsheet_id=spreadsheet_id, range=summary_sheet_range, values=self.orders_summary_to_csv(summary_sheet_data))
+			if result_1["updates"].get("updatedRows", 0) == 0 or result_2["updates"].get("updatedRows", 0) == 0:
+				self.logger.error(f"Error uploading summary to Google Sheets")
+				self.logger.error(str(result_1))
+				self.logger.error(str(result_2))
 
 	def orders_list_to_csv(self, orders) -> list:
 		out = []
@@ -126,7 +122,7 @@ class CharmedTracker(Loggable):
 		return out
 
 	def make_orders_summary(self, orders_list):
-		#TODO gotta be a better way of doing this
+		#TODO weekly summary. Re-write to generalize?
 		start_date = datetime.strptime(self.config.data["program_start_date"][:10], "%Y-%m-%d")
 		end_date = datetime.strptime(today(), "%Y-%m-%d")
 		summary = {}
@@ -144,7 +140,7 @@ class CharmedTracker(Loggable):
 								"printed_count": 0,
 								"shipped_count": 0,
 								"shipped_in_five_days": 0,
-								"days_to_ship": []
+								"_days_to_ship_dataset": []
 							}}
 						)
 					if order.creation_date: summary[date_str]["created_count"] += 1
@@ -153,7 +149,7 @@ class CharmedTracker(Loggable):
 					if order.ship_date:
 						summary[date_str]["shipped_count"] += 1
 						days_to_ship = (datetime.strptime(order.ship_date[:10], "%Y-%m-%d") - datetime.strptime(order.creation_date[:10], "%Y-%m-%d")).days
-						summary[date_str]["days_to_ship"].append(days_to_ship)
+						summary[date_str]["_days_to_ship_dataset"].append(days_to_ship)
 						if days_to_ship <= 5:
 							summary[date_str]["shipped_in_five_days"] += 1
 				date_index += timedelta(days=1)
@@ -161,8 +157,10 @@ class CharmedTracker(Loggable):
 		out = []
 		for date_str in summary:
 			day = summary[date_str]
-			day["average_days_to_ship"] = math.floor(sum([x for x in day["days_to_ship"]])) / len(day["days_to_ship"])
-			del day["days_to_ship"]
+			day["average_days_to_ship"] = math.floor(sum([x for x in day["_days_to_ship_dataset"]])) / len(day["_days_to_ship_dataset"])
+			day["percent_shipped"] = day["shipped_count"] / day["created_count"]
+			day["percent_shipped_in_5"] = day["shipped_in_five_days"] / day["shipped_count"]
+			del day["_days_to_ship_dataset"]
 			out.append(day)
 		return out
 
@@ -287,14 +285,7 @@ class CharmedTracker(Loggable):
 			return today_str
 
 class Storage(Loggable):
-	'''Allows access to data stored on disk
-
-	Example Usage:
-	my_storage = Storage("C:/file.json")
-	my_data = my_storage.data
-	my_data.append(my_object)
-	my_storage.save()
-	'''
+	'''Allows access to data stored on disk'''
 	def __init__(self, filepath: str, default_value=None):
 		'''
 		param filepath: path to .json file
@@ -386,8 +377,9 @@ class MyJSONEncoder(json.JSONEncoder):
 		return values
 
 class WMS_API(Loggable):
-	BYTES_USED = 0
 	'''Gets orders data from 3PLC'''
+	BYTES_USED = 0
+
 	def __init__(self, config: Storage):
 		'''
 		params config: json file with config information
@@ -524,15 +516,11 @@ class WMS_API(Loggable):
 		body_len = len(request.request.body if request.request.body else [])
 		text_len = len(request.text)
 		approx_len = method_len + url_len + headers_len + body_len + text_len
-		#self.logger.info(request.text)
 		self.logger.info(f"Used approx. {str(approx_len)} bytes")
 		self.config.data["approx_bytes_used"] += approx_len
 		return approx_len
 
 class GoogleSheets_API(Loggable):
-	'''
-	{'spreadsheetId': '1Cp9xkldWyeK5fyWK0QovsH57E1vgX13YqoSN638HsGI', 'updates': {'spreadsheetId': '1Cp9xkldWyeK5fyWK0QovsH57E1vgX13YqoSN638HsGI', 'updatedRange': 'MAIN!A1:L55027', 'updatedRows': 55027, 'updatedColumns': 12, 'updatedCells': 654052}}
-	'''
 	SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
 
 	def __init__(self, config: Storage):
@@ -565,9 +553,7 @@ class GoogleSheets_API(Loggable):
 			"values": values
 		}
 		result = self.sheet.values().append(spreadsheetId=spreadsheet_id, range=range, valueInputOption = "RAW", body = body).execute()
-		self.logger.info(result)
 		return result
-		#TODO parse results
 		
 def init_logging():
 	logger = logging.getLogger()
@@ -590,5 +576,5 @@ def init_logging():
 
 if __name__ == "__main__":
 	init_logging()
-	ct = CharmedTracker().main()
+	CharmedTracker().main()
 	

@@ -1,0 +1,3 @@
+20220907151851 ERROR Error uploading summary to Google Sheets
+20220907151851 ERROR {'spreadsheetId': '1Cp9xkldWyeK5fyWK0QovsH57E1vgX13YqoSN638HsGI', 'updates': {'spreadsheetId': '1Cp9xkldWyeK5fyWK0QovsH57E1vgX13YqoSN638HsGI', 'updatedRange': 'TEST!A1:T18996', 'updatedRows': 18996, 'updatedColumns': 20, 'updatedCells': 372108}}
+20220907151851 ERROR {'spreadsheetId': '1Cp9xkldWyeK5fyWK0QovsH57E1vgX13YqoSN638HsGI', 'updates': {'spreadsheetId': '1Cp9xkldWyeK5fyWK0QovsH57E1vgX13YqoSN638HsGI', 'updatedRange': 'TEST3!A1:G38', 'updatedRows': 38, 'updatedColumns': 7, 'updatedCells': 266}}
