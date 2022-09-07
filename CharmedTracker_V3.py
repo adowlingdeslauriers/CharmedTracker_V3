@@ -1,14 +1,12 @@
 ''' TODO
 X Add header to data tab
-Change prime index from closed to created
+X Change prime index from closed to created
 %shipped in 5 days (creation to scan)
 Avg. ship days
 '''
-
 #CharmedTracker_V3.py
 # Default Packages
 import json
-from datetime import datetime
 import pathlib
 import unittest #TODO
 import traceback
@@ -45,31 +43,29 @@ class CharmedTracker(Loggable):
 
 	def main(self):
 		#TODO clean up orders older than X days
-		print(self.make_orders_summary(self.orders_storage.data))
-		#self.update_orders_list()
-		#matches_found = self.process_scans_folder()
-		#if matches_found or True:
-		#	self.update_google_sheet()
+		self.update_orders_list()
+		matches_found = self.process_scans_folder()
+		if matches_found or True:
+			self.update_google_sheet()
 	
 	def update_orders_list(self):
 		start_date = self.config.data["last_run_date"]
 		end_date = now()
 		for customer in self.config.data["supported_customers"]:
-			customer_id = str(self.config.data["supported_customers"][customer])
+			customer_id = str(self.config.data["supported_customers"][customer]["3PLC_customer_id"])
 			orders_list = self.wms_api.get_3PLC_orders_since_date(customer_id, start_date, end_date)
 			if orders_list:
 				orders_count = str(len(orders_list))
 				self.logger.info(f"{orders_count} results parsed")
 				#
 				for order in orders_list:
-					if "cancel" in order.reference_id.lower():
-						order = self.set_to_shipped(order)
-						self.logger.info(f"Order {order.order_id} reference_id: {order.reference_id} set to shipped")
+					'''
 					if "letter" in order.tracking_number.lower():
 						order = self.set_to_shipped(order)
 						self.logger.info(f"Order {order.order_id} {order.tracking_number} set to shipped")
-					self.orders_storage.add(order, index=order.close_date)
-				#
+					'''
+					if "cancel" not in order.reference_id.lower():
+						self.orders_storage.add(order, index=order.creation_date)
 				self.orders_storage.save()
 		self.config.data["last_run_date"] = now()
 		self.config.save()
@@ -104,34 +100,86 @@ class CharmedTracker(Loggable):
 	
 	def update_google_sheet(self):
 		for customer in self.config.data["supported_customers"]:
+			customer = self.config.data["supported_customers"][customer]
 			spreadsheet_id = customer["google_spreadsheet_id"]
-			data_sheet_data = [order for order in self.orders_storage.data if order.customer == customer["3PLC_customer_id"]]
+			data_sheet_data = [order for order in self.orders_storage.data if order.customer_id == customer["3PLC_customer_id"]]
 			data_sheet_range = customer["google_sheet_data_range"]
-			self.google_api.update(spreadsheet_id=spreadsheet_id, range=data_sheet_range, values=data_sheet_data)
-			#TODO
-			#summary_sheet_range = customer["google_sheet_summary_range"]
-			#summary_sheet_data = self.make_orders_summary(data_sheet_data)
-			#self.google_api.update(spreadsheet_id=spreadsheet_id, range=summary_sheet_range, values=summary_sheet_data)
+			#self.google_api.update(spreadsheet_id=spreadsheet_id, range=data_sheet_range, values=self.orders_list_to_csv(data_sheet_data))
+			#
+			summary_sheet_range = customer["google_sheet_summary_range"]
+			summary_sheet_data = self.make_orders_summary(data_sheet_data)
+			self.google_api.update(spreadsheet_id=spreadsheet_id, range=summary_sheet_range, values=self.orders_summary_to_csv(summary_sheet_data))
+
+	def orders_list_to_csv(self, orders) -> list:
+		out = []
+		#
+		header_line = []
+		for key in orders[0].__dict__.keys(): #keys of first element are converted to column names
+			header_line.append(key)
+		out.append(header_line)
+		#
+		for item in orders:
+			out_line = []
+			for value in item.__dict__.values():
+				out_line.append(value)
+			out.append(out_line)
+		return out
 
 	def make_orders_summary(self, orders_list):
+		#TODO gotta be a better way of doing this
 		start_date = datetime.strptime(self.config.data["program_start_date"][:10], "%Y-%m-%d")
 		end_date = datetime.strptime(today(), "%Y-%m-%d")
-		orders_by_date = {}
+		summary = {}
 		for order in orders_list:
 			date_index = start_date
 			while date_index < end_date:
-				if order.close_date[:10] == datetime.strftime(date_index, "%Y-%m-%d"):
-					if not orders_by_date.get(date_index, False):
-						orders_by_date.update({date_index: []})
-					orders_by_date[date_index].append(order)
+				date_str = datetime.strftime(date_index, "%Y-%m-%d")
+				if order.creation_date[:10] == date_str:
+					if not summary.get(date_str, False):
+						summary.update({
+							date_str: {
+								"date": order.creation_date[:10],
+								"created_count": 0,
+								"closed_count": 0,
+								"printed_count": 0,
+								"shipped_count": 0,
+								"shipped_in_five_days": 0,
+								"days_to_ship": []
+							}}
+						)
+					if order.creation_date: summary[date_str]["created_count"] += 1
+					if order.close_date: summary[date_str]["closed_count"] += 1
+					if order.print_date: summary[date_str]["printed_count"] += 1
+					if order.ship_date:
+						summary[date_str]["shipped_count"] += 1
+						days_to_ship = (datetime.strptime(order.ship_date[:10], "%Y-%m-%d") - datetime.strptime(order.creation_date[:10], "%Y-%m-%d")).days
+						summary[date_str]["days_to_ship"].append(days_to_ship)
+						if days_to_ship <= 5:
+							summary[date_str]["shipped_in_five_days"] += 1
 				date_index += timedelta(days=1)
-		'''
-		orders_by_date = {
-			"2022-09-01": [orders...],
-			"2022-09-02": [orders...]
-		}
-		'''
-		return orders_by_date
+
+		out = []
+		for date_str in summary:
+			day = summary[date_str]
+			day["average_days_to_ship"] = math.floor(sum([x for x in day["days_to_ship"]])) / len(day["days_to_ship"])
+			del day["days_to_ship"]
+			out.append(day)
+		return out
+
+	def orders_summary_to_csv(self, summary):
+		out = []
+		#
+		header_line = []
+		for key in summary[0].keys(): #keys of first element are converted to column names
+			header_line.append(key)
+		out.append(header_line)
+		#
+		for item in summary:
+			out_line = []
+			for value in item.values():
+				out_line.append(value)
+			out.append(out_line)
+		return out
 
 	def load_csv(self, filepath: str) -> list:
 		scans_list = []
@@ -171,7 +219,7 @@ class CharmedTracker(Loggable):
 	def set_to_shipped(self, order, scan_date=None):
 		order.ship_status = "shipped"
 		if scan_date == None:
-			scan_date = today()
+			scan_date = "2022-09-02"
 		#
 		if order.ship_date != None:
 			order.ship_date = min(order.ship_date, scan_date)
@@ -431,7 +479,7 @@ class WMS_API(Loggable):
 		return None
 
 	def _fetch_3PLC_orders_since_date(self, customer_id: str, start_date: str, end_date: str) -> list:
-		rql = f"readonly.processDate=gt={start_date};readonly.processDate=lt={end_date};readonly.customeridentifier.id=={customer_id};readonly.isclosed==True"
+		rql = f"readonly.CreationDate=gt={start_date};readonly.CreationDate=lt={end_date};readonly.customeridentifier.id=={customer_id}"
 		max_pages = 1
 		orders_list = []
 		def _get_orders(pgnum):
@@ -514,27 +562,12 @@ class GoogleSheets_API(Loggable):
 	def update(self, spreadsheet_id: str, range: str, values):
 		self.sheet.values().clear(spreadsheetId=spreadsheet_id, range=range).execute()
 		body = {
-			"values": self.dict_to_csv(values)
+			"values": values
 		}
 		result = self.sheet.values().append(spreadsheetId=spreadsheet_id, range=range, valueInputOption = "RAW", body = body).execute()
 		self.logger.info(result)
 		return result
 		#TODO parse results
-
-	def dict_to_csv(self, dict) -> list:
-		out = []
-		#
-		header_line = []
-		for key in dict[0].__dict__.keys(): #keys of first element are converted to column names
-			header_line.append(key)
-		out.append(header_line)
-		#
-		for item in dict:
-			out_line = []
-			for value in item.__dict__.values():
-				out_line.append(value)
-			out.append(out_line)
-		return out
 		
 def init_logging():
 	logger = logging.getLogger()
