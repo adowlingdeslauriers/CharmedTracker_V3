@@ -141,8 +141,8 @@ class CharmedTracker(Loggable):
 								"shipped_count": 0,
 								"shipped_in_five_days": 0,
 								"_days_to_ship_dataset": []
-							}}
-						)
+							}
+						})
 					if order.creation_date: summary[date_str]["created_count"] += 1
 					if order.close_date: summary[date_str]["closed_count"] += 1
 					if order.print_date: summary[date_str]["printed_count"] += 1
@@ -157,9 +157,9 @@ class CharmedTracker(Loggable):
 		out = []
 		for date_str in summary:
 			day = summary[date_str]
-			day["average_days_to_ship"] = math.floor(sum([x for x in day["_days_to_ship_dataset"]])) / len(day["_days_to_ship_dataset"])
+			day["average_days_to_ship"] = math.floor(sum([x for x in day["_days_to_ship_dataset"]])) / max(1, len(day["_days_to_ship_dataset"]))
 			day["percent_shipped"] = day["shipped_count"] / day["created_count"]
-			day["percent_shipped_in_5"] = day["shipped_in_five_days"] / day["shipped_count"]
+			day["percent_shipped_in_5"] = day["shipped_in_five_days"] / max(1, day["shipped_count"])
 			del day["_days_to_ship_dataset"]
 			out.append(day)
 		return out
@@ -217,7 +217,7 @@ class CharmedTracker(Loggable):
 	def set_to_shipped(self, order, scan_date=None):
 		order.ship_status = "shipped"
 		if scan_date == None:
-			scan_date = "2022-09-02"
+			scan_date = today()
 		#
 		if order.ship_date != None:
 			order.ship_date = min(order.ship_date, scan_date)
