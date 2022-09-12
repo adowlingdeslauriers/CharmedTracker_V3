@@ -6,7 +6,7 @@
 		{
 			"label": "Run w/Python 3.10.6",
 			"type": "shell",
-			"command": "\"C:\\Users\\Alex\\Desktop\\AlexWorkspace\\Python310\\python.exe\" ${file}",
+			"command": "python ${file}",
 			"problemMatcher": [],
 			"group": {
 				"kind": "build",

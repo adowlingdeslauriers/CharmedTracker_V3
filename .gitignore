@@ -1,2 +1,4 @@
 resources/orders_storage.json
 resources/scans_storage.json
+.vscode/tasks.json
+.vscode/launch.json

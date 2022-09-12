@@ -33,15 +33,34 @@ class CharmedTracker(Loggable):
 		self.wms_api = WMS_API(config=self.config)
 		self.google_api = GoogleSheets_API(config=self.config)
 
+	def _remove_all_before_date(self, date):
+		self.logger.log(f"")
+
+	def _remove_all_after_date(self, date):
+		self.logger.log(f"")
+
+	def _set_all_to_unshipped(self):
+		self.logger.log(f"")
+
 	def main(self):
 		#TODO clean up orders older than X days
-		self.update_orders_list()
+		self.update_current_orders()
+		self.fetch_new_orders()
 		matches_found = self.process_scans_folder()
 		if matches_found or True:
 			self.update_google_sheet()
 		self.logger.info("CharmedTracker exit")
-	
-	def update_orders_list(self):
+
+	def update_current_orders(self):
+		match_flag = False
+		for order in self.orders_storage.data:
+			if order.close_date == None:
+				match_flag = True
+				order = self.wms_api.get_order(str(order.order_id))
+		if match_flag:
+			self.orders_storage.save()
+
+	def fetch_new_orders(self):
 		start_date = self.config.data["last_run_date"]
 		end_date = now()
 		for customer in self.config.data["supported_customers"]:
@@ -478,6 +497,28 @@ class WMS_API(Loggable):
 			self.logger.error(response.text)
 		return None
 
+	def get_order(self, order_id):
+		order_id = str(order_id)
+		raw_order = self._fetch_order(order_id)
+		if raw_order:
+			order = self._parse_order(raw_order)
+			return order
+		return None
+
+	def _fetch_order(self, order_id: str):
+		host_url = f"https://secure-wms.com/order/{order_id}"
+		headers = {
+			"Content-Type": "application/json; charset=utf-8",
+			"Accept": "application/json",
+			"Host": "secure-wms.com",
+			"Accept-Language": "Content-Length",
+			"Accept-Encoding": "gzip,deflate,sdch",
+			"Authorization": "Bearer " + self.config.data["token"]["contents"]["access_token"]
+		}
+		response = requests.request("GET", host_url, data = {}, headers = headers, timeout = 30.0)
+		self.log_data_usage(response) #TODO decorator
+		return response
+
 	def _parse_order(self, order: dict) -> Order:
 		_order = None
 		try:
@@ -521,7 +562,7 @@ class WMS_API(Loggable):
 		return None
 
 	def _fetch_3PLC_orders_since_date(self, customer_id: str, start_date: str, end_date: str) -> list:
-		rql = f"readonly.CreationDate=gt={start_date};readonly.CreationDate=lt={end_date};readonly.customeridentifier.id=={customer_id}"
+		rql = f"readonly.CreationDate=gt={start_date};readonly.CreationDate=lt={end_date};readonly.customeridentifier.id=={customer_id};IsClosed==true"
 		max_pages = 1
 		orders_list = []
 		def _get_orders(pgnum):
