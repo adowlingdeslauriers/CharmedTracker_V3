@@ -33,18 +33,34 @@ class CharmedTracker(Loggable):
 		self.wms_api = WMS_API(config=self.config)
 		self.google_api = GoogleSheets_API(config=self.config)
 
-	def _remove_all_before_date(self, date):
-		self.logger.log(f"")
+	def _remove_all_before_date(self, date: str):
+		self.logger.info(f"Removing orders created before {date}")
+		out = []
+		for order in self.orders_storage.data:
+			if not order.creation_date[:10] < date:
+				out.append(order)
+		self.orders_storage.data = out
+		self.orders_storage.save()
 
-	def _remove_all_after_date(self, date):
-		self.logger.log(f"")
+	def _remove_all_after_date(self, date: str):
+		self.logger.info(f"Removing orders created after {date}")
+		out = []
+		for order in self.orders_storage.data:
+			if not order.creation_date[:10] > date:
+				out.append(order)
+		self.orders_storage.data = out
+		self.orders_storage.save()
 
 	def _set_all_to_unshipped(self):
-		self.logger.log(f"")
+		self.logger.info(f"Setting all orders to unshipped")
+		for order in self.orders_storage.data:
+			order.ship_status = None
+			order.ship_date = None
+		self.orders_storage.save()
 
 	def main(self):
 		#TODO clean up orders older than X days
-		self.update_current_orders()
+		#self.update_current_orders()
 		self.fetch_new_orders()
 		matches_found = self.process_scans_folder()
 		if matches_found or True:
@@ -558,11 +574,12 @@ class WMS_API(Loggable):
 					result = self._parse_order(raw_order)
 					if result:
 						clean_orders.append(result)
+				self.logger.info(f"Retreived {str(len(clean_orders))} new orders from 3PLC")
 				return clean_orders
 		return None
 
 	def _fetch_3PLC_orders_since_date(self, customer_id: str, start_date: str, end_date: str) -> list:
-		rql = f"readonly.CreationDate=gt={start_date};readonly.CreationDate=lt={end_date};readonly.customeridentifier.id=={customer_id};IsClosed==true"
+		rql = f"readonly.CreationDate=gt={start_date};readonly.CreationDate=lt={end_date};readonly.customeridentifier.id=={customer_id};readonly.IsClosed==true"
 		max_pages = 1
 		orders_list = []
 		def _get_orders(pgnum):
@@ -594,6 +611,7 @@ class WMS_API(Loggable):
 			return orders_list
 		else:
 			self.logger.warning(f"Unable to fetch orders from {start_date} to {end_date} for {customer_id}")
+			self.logger.warning(response.text)
 			self.logger.warning(traceback.format_exc())
 			return None
 
@@ -644,6 +662,7 @@ class GoogleSheets_API(Loggable):
 			"values": values
 		}
 		result = self.sheet.values().append(spreadsheetId=spreadsheet_id, range=range, valueInputOption = "RAW", body = body).execute()
+		self.logger.info(f"Updated {str(result.get('UpdatedRows', 0))} rows")
 		return result
 		
 def init_logging():
@@ -668,4 +687,5 @@ def init_logging():
 if __name__ == "__main__":
 	init_logging()
 	CharmedTracker().main()
+	#CharmedTracker()._remove_all_after_date("2022-09-06")
 	
