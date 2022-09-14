@@ -201,6 +201,7 @@ class CharmedTracker(Loggable):
 			day["percent_shipped_in_5"] = day["shipped_in_five_days"] / max(1, day["shipped_count"])
 			del day["_days_to_ship_dataset"]
 			out.append(day)
+		print(out)
 		return out
 
 	def make_weekly_orders_summary(self, orders_list):
@@ -247,6 +248,7 @@ class CharmedTracker(Loggable):
 			day["percent_shipped_in_5"] = day["shipped_in_five_days"] / max(1, day["shipped_count"])
 			del day["_days_to_ship_dataset"]
 			out.append(day)
+		print(out)
 		return out
 
 	def orders_summary_to_csv(self, summary):
@@ -662,7 +664,9 @@ class GoogleSheets_API(Loggable):
 			"values": values
 		}
 		result = self.sheet.values().append(spreadsheetId=spreadsheet_id, range=range, valueInputOption = "RAW", body = body).execute()
-		self.logger.info(f"Updated {str(result.get('UpdatedRows', 0))} rows")
+		if result.get("updates", {}).get("updatedRows", 0) == 0:
+			self.logger.warning(f"Error updating Google Sheets:")
+			self.logger.warning(result)
 		return result
 		
 def init_logging():
