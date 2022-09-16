@@ -48,6 +48,8 @@ class CharmedTracker(Loggable):
 		for order in self.orders_storage.data:
 			if not order.creation_date[:10] > date:
 				out.append(order)
+		self.config.data["last_run_date"] = date + " 23:59:00" #tmp
+		self.config.save()
 		self.orders_storage.data = out
 		self.orders_storage.save()
 
@@ -60,17 +62,21 @@ class CharmedTracker(Loggable):
 
 	def main(self):
 		#TODO clean up orders older than X days
-		#self.update_current_orders()
-		self.fetch_new_orders()
+		self.update_current_orders()
+		new_orders = self.fetch_new_orders()
 		matches_found = self.process_scans_folder()
-		if matches_found or True:
+		if new_orders or matches_found:
+			self.logger.info("New orders/matches found. Updating Google Sheet...")
 			self.update_google_sheet()
+		else:
+			self.logger.info("No new orders or matches found. Exiting")
 		self.logger.info("CharmedTracker exit")
 
 	def update_current_orders(self):
 		match_flag = False
+		time_limit = datetime.strftime(datetime.now() - timedelta(days=3), "%Y-%m-%d %H:%M:%S")
 		for order in self.orders_storage.data:
-			if order.close_date == None:
+			if order.close_date == None and order.creation_date < time_limit:
 				match_flag = True
 				order = self.wms_api.get_order(str(order.order_id))
 		if match_flag:
@@ -79,6 +85,7 @@ class CharmedTracker(Loggable):
 	def fetch_new_orders(self):
 		start_date = self.config.data["last_run_date"]
 		end_date = now()
+		new_orders_flag = False
 		for customer in self.config.data["supported_customers"]:
 			customer_id = str(self.config.data["supported_customers"][customer]["3PLC_customer_id"])
 			orders_list = self.wms_api.get_3PLC_orders_since_date(customer_id, start_date, end_date)
@@ -95,8 +102,11 @@ class CharmedTracker(Loggable):
 					if "cancel" not in order.reference_id.lower():
 						self.orders_storage.add(order, index=order.creation_date)
 				self.orders_storage.save()
-		self.config.data["last_run_date"] = now()
-		self.config.save()
+				new_orders_flag = True
+		if new_orders_flag:
+			self.config.data["last_run_date"] = now()
+			self.config.save()
+			return new_orders_flag
 	
 	def process_scans_folder(self):
 		parent_dir = pathlib.Path(os.getcwd()).parent.absolute()
@@ -139,7 +149,7 @@ class CharmedTracker(Loggable):
 			result_1 = self.google_api.update(spreadsheet_id=spreadsheet_id, range=data_sheet_range, values=self.orders_list_to_csv(data_sheet_data))
 			result_2 = self.google_api.update(spreadsheet_id=spreadsheet_id, range=daily_summary_sheet_range, values=self.orders_summary_to_csv(daily_summary_sheet_data))
 			result_3 = self.google_api.update(spreadsheet_id=spreadsheet_id, range=weekly_summary_sheet_range, values=self.orders_summary_to_csv(weekly_summary_sheet_data))
-			if result_1["updates"].get("updatedRows", 0) == 0 or result_2["updates"].get("updatedRows", 0) == 0 or result_3["updates"].get("updatedRows", 0) == 0:
+			if result_1.get("updates", {}).get("updatedRows", 0) == 0 or result_2.get("updates", {}).get("updatedRows", 0) == 0 or result_3.get("updates", {}).get("updatedRows", 0) == 0:
 				self.logger.error(f"Error uploading summary to Google Sheets")
 				self.logger.error(str(result_1))
 				self.logger.error(str(result_2))
@@ -201,7 +211,7 @@ class CharmedTracker(Loggable):
 			day["percent_shipped_in_5"] = day["shipped_in_five_days"] / max(1, day["shipped_count"])
 			del day["_days_to_ship_dataset"]
 			out.append(day)
-		print(out)
+		#print(out)
 		return out
 
 	def make_weekly_orders_summary(self, orders_list):
@@ -248,7 +258,7 @@ class CharmedTracker(Loggable):
 			day["percent_shipped_in_5"] = day["shipped_in_five_days"] / max(1, day["shipped_count"])
 			del day["_days_to_ship_dataset"]
 			out.append(day)
-		print(out)
+		#print(out)
 		return out
 
 	def orders_summary_to_csv(self, summary):
@@ -445,12 +455,6 @@ class Order:
 	def __str__(self):
 		return str(self.__dict__)
 
-def today():
-	return datetime.strftime(datetime.now(), "%Y-%m-%d")
-
-def now():
-	return datetime.strftime(datetime.now(), "%Y-%m-%d %H:%M:%S")
-
 class MyJSONEncoder(json.JSONEncoder):
 	def default(self, obj):
 		if isinstance(obj, Order):
@@ -581,7 +585,7 @@ class WMS_API(Loggable):
 		return None
 
 	def _fetch_3PLC_orders_since_date(self, customer_id: str, start_date: str, end_date: str) -> list:
-		rql = f"readonly.CreationDate=gt={start_date};readonly.CreationDate=lt={end_date};readonly.customeridentifier.id=={customer_id};readonly.IsClosed==true"
+		rql = f"readonly.CreationDate=gt={start_date};readonly.CreationDate=lt={end_date};readonly.customeridentifier.id=={customer_id}"
 		max_pages = 1
 		orders_list = []
 		def _get_orders(pgnum):
@@ -606,10 +610,12 @@ class WMS_API(Loggable):
 			orders_list += page_orders
 			#
 			max_pages = math.ceil(total_results / 1000)
-			for page_count in range(1, max_pages):
-				response = _get_orders(pgnum=page_count)
-				page_orders = response.json()["ResourceList"]
-				orders_list += page_orders
+			if max_pages > 1:
+				for page_count in range(2, max_pages+1):
+					self.logger.info(f"Fetching page {str(page_count)} found for {customer_id} from {start_date} to {end_date}")
+					response = _get_orders(pgnum=page_count)
+					page_orders = response.json()["ResourceList"]
+					orders_list += page_orders
 			return orders_list
 		else:
 			self.logger.warning(f"Unable to fetch orders from {start_date} to {end_date} for {customer_id}")
@@ -688,8 +694,14 @@ def init_logging():
 	#
 	logger.info("init CharmedTracker_V3")
 
+def today():
+	return datetime.strftime(datetime.now(), "%Y-%m-%d")
+
+def now():
+	return datetime.strftime(datetime.now(), "%Y-%m-%d %H:%M:%S")
+
 if __name__ == "__main__":
 	init_logging()
+	CharmedTracker()._remove_all_after_date("2022-08-27")
 	CharmedTracker().main()
-	#CharmedTracker()._remove_all_after_date("2022-09-06")
 	
