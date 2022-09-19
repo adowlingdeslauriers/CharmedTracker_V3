@@ -10,7 +10,8 @@
 			"request": "launch",
 			"program": "${file}",
 			"console": "integratedTerminal",
-			"justMyCode": true
+			"justMyCode": true,
+			"python": "C:/Users/Alex/Desktop/AlexWorkspace/Python310/python.exe"
 		}
 	]
 }

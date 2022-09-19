@@ -61,11 +61,10 @@ class CharmedTracker(Loggable):
 		self.orders_storage.save()
 
 	def main(self):
-		#TODO clean up orders older than X days
-		self.update_current_orders()
+		#self.update_current_orders() #TODO remove
 		new_orders = self.fetch_new_orders()
 		matches_found = self.process_scans_folder()
-		if new_orders or matches_found:
+		if new_orders or matches_found or True:#TODO remove
 			self.logger.info("New orders/matches found. Updating Google Sheet...")
 			self.update_google_sheet()
 		else:
@@ -144,16 +143,16 @@ class CharmedTracker(Loggable):
 			data_sheet_range = customer["google_sheet_data_range"]
 			daily_summary_sheet_range = customer["google_sheet_daily_summary_range"]
 			daily_summary_sheet_data = self.make_daily_orders_summary(data_sheet_data)
-			#weekly_summary_sheet_range = customer["google_sheet_weekly_summary_range"]
-			#weekly_summary_sheet_data = self.make_weekly_orders_summary(daily_summary_sheet_data)
+			weekly_summary_sheet_range = customer["google_sheet_weekly_summary_range"]
+			weekly_summary_sheet_data = self.make_weekly_orders_summary(daily_summary_sheet_data)
 			result_1 = self.google_api.update(spreadsheet_id=spreadsheet_id, range=data_sheet_range, values=self.orders_list_to_csv(data_sheet_data))
 			result_2 = self.google_api.update(spreadsheet_id=spreadsheet_id, range=daily_summary_sheet_range, values=self.orders_summary_to_csv(daily_summary_sheet_data))
-			#result_3 = self.google_api.update(spreadsheet_id=spreadsheet_id, range=weekly_summary_sheet_range, values=self.orders_summary_to_csv(weekly_summary_sheet_data))
-			if result_1.get("updates", {}).get("updatedRows", 0) == 0 or result_2.get("updates", {}).get("updatedRows", 0) == 0:# or result_3.get("updates", {}).get("updatedRows", 0) == 0:
+			result_3 = self.google_api.update(spreadsheet_id=spreadsheet_id, range=weekly_summary_sheet_range, values=self.orders_summary_to_csv(weekly_summary_sheet_data))
+			if result_1.get("updates", {}).get("updatedRows", 0) == 0 or result_2.get("updates", {}).get("updatedRows", 0) == 0 or result_3.get("updates", {}).get("updatedRows", 0) == 0:
 				self.logger.error(f"Error uploading summary to Google Sheets")
 				self.logger.error(str(result_1))
 				self.logger.error(str(result_2))
-				#self.logger.error(str(result_3))
+				self.logger.error(str(result_3))
 
 	def orders_list_to_csv(self, orders) -> list:
 		out = []
@@ -171,51 +170,110 @@ class CharmedTracker(Loggable):
 		return out
 
 	def make_daily_orders_summary(self, orders_list):
-		#TODO weekly summary. Re-write to generalize?
 		start_date = datetime.strptime(self.config.data["program_start_date"][:10], "%Y-%m-%d")
 		end_date = datetime.strptime(today(), "%Y-%m-%d")
-		summary = {}
+		summary_dataset = {}
 		for order in orders_list:
 			date_index = start_date
 			while date_index < end_date:
 				date_str = datetime.strftime(date_index, "%Y-%m-%d")
 				if order.creation_date[:10] == date_str:
-					if not summary.get(date_str, False):
-						summary.update({
-							date_str: {
-								"date": order.creation_date[:10],
-								"created_count": 0,
-								#"closed_count": 0,
-								"printed_count": 0,
-								"shipped_count": 0,
-								"shipped_in_five_days": 0,
-								"_days_to_ship_dataset": []
+					if not summary_dataset.get(date_str, False):
+						summary_dataset.update(
+							{
+								date_str: {
+									"date": order.creation_date[:10],
+									"created_count": 0,
+									"closed_count": 0,
+									"printed_count": 0,
+									"shipped_count": 0,
+									"shipped_in_five_days": 0,
+									"_days_to_ship_dataset": []
+								}
 							}
-						})
-					if order.creation_date: summary[date_str]["created_count"] += 1
-					#if order.close_date: summary[date_str]["closed_count"] += 1
-					if order.print_date: summary[date_str]["printed_count"] += 1
+						)
+					if order.creation_date:
+						summary_dataset[date_str]["created_count"] += 1
+					if order.close_date:
+						summary_dataset[date_str]["closed_count"] += 1
+					if order.print_date:
+						summary_dataset[date_str]["printed_count"] += 1
 					if order.ship_date:
-						summary[date_str]["shipped_count"] += 1
-						days_to_ship = (datetime.strptime(order.ship_date[:10], "%Y-%m-%d") - datetime.strptime(order.creation_date[:10], "%Y-%m-%d")).days
-						summary[date_str]["_days_to_ship_dataset"].append(days_to_ship)
+						summary_dataset[date_str]["shipped_count"] += 1
+						def days_to_ship(order):
+							order_creation_date = datetime.strptime(order.creation_date[:10], "%Y-%m-%d")
+							if order_creation_date.toordinal() % 7 == 6: #If date is Saturday
+								order_creation_date = order_creation_date + timedelta(days=2)
+							elif order_creation_date.toordinal() % 7 == 0: #If date is Saturday
+								order_creation_date = order_creation_date + timedelta(days=1)
+
+							order_ship_date = datetime.strptime(order.ship_date[:10], "%Y-%m-%d")
+							if order_ship_date.toordinal() % 7 == 6: #If date is Saturday
+								order_ship_date = order_ship_date + timedelta(days=2)
+							elif order_ship_date.toordinal() % 7 == 0: #If date is Saturday
+								order_ship_date = order_ship_date + timedelta(days=1)
+
+							index = order_creation_date
+							days_to_ship = 0
+							while index < order_ship_date:
+								if not index.toordinal() % 7 == 0 or index.toordinal() % 7 == 6:
+									days_to_ship += 1
+								index += timedelta(days=1)
+							
+							#self.logger.info(f"{order.creation_date} {order_creation_date}\n{order.ship_date} {order_ship_date}\n{str(days_to_ship)}")
+							return days_to_ship
+							
+						days_to_ship = days_to_ship(order)
+						summary_dataset[date_str]["_days_to_ship_dataset"].append(days_to_ship)
 						if days_to_ship <= 5:
-							summary[date_str]["shipped_in_five_days"] += 1
+							summary_dataset[date_str]["shipped_in_five_days"] += 1
 				date_index += timedelta(days=1)
 
-		out = []
-		for date_str in summary:
-			day = summary[date_str]
+		summary = []
+		for date_str in summary_dataset:
+			day = summary_dataset[date_str]
 			day["average_days_to_ship"] = math.floor(sum([x for x in day["_days_to_ship_dataset"]])) / max(1, len(day["_days_to_ship_dataset"]))
 			day["percent_shipped"] = day["shipped_count"] / day["created_count"]
 			day["percent_shipped_in_5"] = day["shipped_in_five_days"] / max(1, day["shipped_count"])
 			del day["_days_to_ship_dataset"]
-			out.append(day)
-		#print(out)
-		return out
+			summary.append(day)
+		self.logger.info(json.dumps(summary, indent=2))
+		return summary
 
-	def make_weekly_orders_summary(self, orders_list):
-		return {}
+	def make_weekly_orders_summary(self, daily_summary):
+		program_start_date = datetime.strptime(self.config.data["program_start_date"][:10], "%Y-%m-%d")
+		program_start_date_prior_monday = datetime.fromordinal(math.floor((program_start_date - timedelta(days=1)).toordinal() / 7) * 7) + timedelta(days=1)
+		index = program_start_date_prior_monday
+		weekly_summary_dataset = {}
+		for day in daily_summary:
+			monday = datetime.fromordinal(math.floor((datetime.strptime(day["date"], "%Y-%m-%d") - timedelta(days=1)).toordinal() / 7) * 7) + timedelta(days=1)
+			monday_str = datetime.strftime(monday, "%Y-%m-%d")
+			if not weekly_summary_dataset.get(monday_str, False):
+				weekly_summary_dataset.update(
+					{
+						monday_str: {
+							"date": datetime.strftime(monday, "%Y-%m-%d"),
+							"created_count": 0,
+							"closed_count": 0,
+							"printed_count": 0,
+							"shipped_count": 0,
+							"shipped_in_five_days": 0
+						}
+					}
+				)
+			weekly_summary_dataset[monday_str]["created_count"] += day["created_count"]
+			weekly_summary_dataset[monday_str]["closed_count"] += day["closed_count"]
+			weekly_summary_dataset[monday_str]["printed_count"] += day["printed_count"]
+			weekly_summary_dataset[monday_str]["shipped_count"] += day["shipped_count"]
+			weekly_summary_dataset[monday_str]["shipped_in_five_days"] += day["shipped_in_five_days"]
+		#
+		for day in weekly_summary_dataset.values():
+			day["percent_shipped"] = day["shipped_count"] / day["created_count"]
+			day["percent_shipped_in_5"] = day["shipped_in_five_days"] / max(1, day["shipped_count"])
+		#
+		weekly_summary = [x for x in weekly_summary_dataset.values()]
+		self.logger.info(json.dumps(weekly_summary, indent=2))
+		return [x for x in weekly_summary_dataset.values()]
 
 	def orders_summary_to_csv(self, summary):
 		out = []
