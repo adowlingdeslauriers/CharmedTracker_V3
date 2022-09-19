@@ -144,16 +144,16 @@ class CharmedTracker(Loggable):
 			data_sheet_range = customer["google_sheet_data_range"]
 			daily_summary_sheet_range = customer["google_sheet_daily_summary_range"]
 			daily_summary_sheet_data = self.make_daily_orders_summary(data_sheet_data)
-			weekly_summary_sheet_range = customer["google_sheet_weekly_summary_range"]
-			weekly_summary_sheet_data = self.make_weekly_orders_summary(data_sheet_data)
+			#weekly_summary_sheet_range = customer["google_sheet_weekly_summary_range"]
+			#weekly_summary_sheet_data = self.make_weekly_orders_summary(daily_summary_sheet_data)
 			result_1 = self.google_api.update(spreadsheet_id=spreadsheet_id, range=data_sheet_range, values=self.orders_list_to_csv(data_sheet_data))
 			result_2 = self.google_api.update(spreadsheet_id=spreadsheet_id, range=daily_summary_sheet_range, values=self.orders_summary_to_csv(daily_summary_sheet_data))
-			result_3 = self.google_api.update(spreadsheet_id=spreadsheet_id, range=weekly_summary_sheet_range, values=self.orders_summary_to_csv(weekly_summary_sheet_data))
-			if result_1.get("updates", {}).get("updatedRows", 0) == 0 or result_2.get("updates", {}).get("updatedRows", 0) == 0 or result_3.get("updates", {}).get("updatedRows", 0) == 0:
+			#result_3 = self.google_api.update(spreadsheet_id=spreadsheet_id, range=weekly_summary_sheet_range, values=self.orders_summary_to_csv(weekly_summary_sheet_data))
+			if result_1.get("updates", {}).get("updatedRows", 0) == 0 or result_2.get("updates", {}).get("updatedRows", 0) == 0:# or result_3.get("updates", {}).get("updatedRows", 0) == 0:
 				self.logger.error(f"Error uploading summary to Google Sheets")
 				self.logger.error(str(result_1))
 				self.logger.error(str(result_2))
-				self.logger.error(str(result_3))
+				#self.logger.error(str(result_3))
 
 	def orders_list_to_csv(self, orders) -> list:
 		out = []
@@ -215,51 +215,7 @@ class CharmedTracker(Loggable):
 		return out
 
 	def make_weekly_orders_summary(self, orders_list):
-		#TODO weekly summary. Re-write to generalize?
-		program_start_date = datetime.strptime(self.config.data["program_start_date"][:10], "%Y-%m-%d")
-		previous_monday = math.floor((datetime.toordinal(program_start_date) - 1) / 7) * 7 + 1
-		start_date = datetime.fromordinal(previous_monday)
-		end_date = datetime.strptime(today(), "%Y-%m-%d")
-		summary = {}
-		for order in orders_list:
-			date_index = start_date
-			while date_index < end_date:
-				date_str = datetime.strftime(date_index, "%Y-%m-%d")
-				end_str = datetime.strftime((date_index + timedelta(days=7)), "%Y-%m-%d")
-				if date_str <= order.creation_date[:10] < end_str:
-					if not summary.get(date_str, False):
-						summary.update({
-							date_str: {
-								"date": order.creation_date[:10],
-								"created_count": 0,
-								#"closed_count": 0,
-								"printed_count": 0,
-								"shipped_count": 0,
-								"shipped_in_five_days": 0,
-								"_days_to_ship_dataset": []
-							}
-						})
-					if order.creation_date: summary[date_str]["created_count"] += 1
-					#if order.close_date: summary[date_str]["closed_count"] += 1
-					if order.print_date: summary[date_str]["printed_count"] += 1
-					if order.ship_date:
-						summary[date_str]["shipped_count"] += 1
-						days_to_ship = (datetime.strptime(order.ship_date[:10], "%Y-%m-%d") - datetime.strptime(order.creation_date[:10], "%Y-%m-%d")).days
-						summary[date_str]["_days_to_ship_dataset"].append(days_to_ship)
-						if days_to_ship <= 5:
-							summary[date_str]["shipped_in_five_days"] += 1
-				date_index += timedelta(days=7)
-
-		out = []
-		for date_str in summary:
-			day = summary[date_str]
-			day["average_days_to_ship"] = math.floor(sum([x for x in day["_days_to_ship_dataset"]])) / max(1, len(day["_days_to_ship_dataset"]))
-			day["percent_shipped"] = day["shipped_count"] / day["created_count"]
-			day["percent_shipped_in_5"] = day["shipped_in_five_days"] / max(1, day["shipped_count"])
-			del day["_days_to_ship_dataset"]
-			out.append(day)
-		#print(out)
-		return out
+		return {}
 
 	def orders_summary_to_csv(self, summary):
 		out = []
@@ -702,6 +658,5 @@ def now():
 
 if __name__ == "__main__":
 	init_logging()
-	CharmedTracker()._remove_all_after_date("2022-08-27")
 	CharmedTracker().main()
 	
